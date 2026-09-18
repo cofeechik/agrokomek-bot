@@ -50,7 +50,7 @@ npm start
 | GEMINI_MODEL | `gemini-3.5-flash`, проверяется через `npm run check` |
 | BOT_MODE | `polling` локально, `webhook` на Render |
 | WEBHOOK_URL | HTTPS-адрес сервиса; на Render берётся RENDER_EXTERNAL_URL |
-| WEBHOOK_SECRET | Случайный секрет от 16 символов; Render Blueprint создаёт его |
+| WEBHOOK_SECRET | Секрет из 16–64 букв, цифр, `_` или `-`; например `AgroKomekWebhook2026_x7` |
 | PORT | По умолчанию 3000; Render задаёт свой порт |
 | USER_DAILY_LIMIT / DAILY_ANALYSIS_LIMIT | Лимиты попыток, 5 / 50 по умолчанию |
 
@@ -61,7 +61,7 @@ npm start
 1. Остановите локальный экземпляр.
 2. В Render выберите **New → Blueprint**, подключите репозиторий и его `render.yaml`.
 3. Введите TELEGRAM_BOT_TOKEN и GEMINI_API_KEY. Проверьте бесплатный план перед созданием.
-4. После сборки дождитесь успешного `/healthz`. Webhook будет зарегистрирован автоматически.
+4. В настройках сервиса добавьте `WEBHOOK_SECRET` вручную: только латинские буквы, цифры, `_` или `-`, длина 16–64 символа. После сборки дождитесь успешного `/healthz`. Webhook будет зарегистрирован автоматически.
 5. Проверьте `/start`, оба языка, фото растения и фото предмета.
 
 При ручном создании Web Service: Build `npm ci`, Start `npm start`, Health check `/healthz`, BOT_MODE=`webhook`, WEBHOOK_SECRET — случайный секрет минимум 16 символов. WEBHOOK_URL можно не задавать на Render.
