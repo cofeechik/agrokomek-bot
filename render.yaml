@@ -19,7 +19,3 @@ services:
         value: gemini-3.5-flash
       - key: WEBHOOK_SECRET
         sync: false
-      - key: DAILY_ANALYSIS_LIMIT
-        value: '50'
-      - key: USER_DAILY_LIMIT
-        value: '5'

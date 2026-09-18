@@ -8,8 +8,8 @@ import { renderResult, messageChunks } from '../src/ui.js';
 import { makeServer } from '../src/server.js';
 import { configFrom } from '../src/config.js';
 
-const result = { status: 'assessment', crop: 'Картофель', title: '<script>test</script>', category: 'disease', label: 'potato_early_blight', urgency: 'soon', signs: ['Пятна'], alternatives: [], actions: ['Осмотрите соседние растения'], question: 'Когда появились пятна?' };
-const cfg = { key: 'fake', token: 'fake', model: 'fake', dailyLimit: 50, userLimit: 5 };
+const result = { status: 'assessment', crop: 'Картофель', title: '<script>test</script>', category: 'disease', label: 'potato_early_blight', urgency: 'soon', meaning: 'Возможна проблема листьев', signs: ['Пятна'], alternatives: [], actions: ['Осмотрите соседние растения'], checks: ['Снимите нижнюю сторону листа'], escalate: 'Обратитесь к агроному при быстром распространении', questions: ['Когда появились пятна?', 'Сколько растений затронуто?'] };
+const cfg = { key: 'fake', token: 'fake', model: 'fake' };
 
 test('image processing rejects non-images, tiny and oversized files, resizes real images', async () => {
   await assert.rejects(prepareImage(Buffer.from('<html>not a photograph</html>')));
@@ -45,12 +45,11 @@ test('Gemini sends photo with schema and rejects truncated output', async () => 
   assert.ok(body.generationConfig.responseJsonSchema.required.includes('status'));
   await assert.rejects(analyze(Buffer.from('x'), cfg, 'potato', 'ru', '', async () => ({ candidates: [{ finishReason: 'MAX_TOKENS' }] })));
 });
-test('quota counts all attempts across users; deleting personal state does not reset quota', () => {
+test('store saves and deletes personal state while retaining update deduplication', () => {
   const store = new Store(':memory:');
   try {
-    store.save(1, { last: 'private' }); assert.ok(store.reserve(1, 2, 1)); assert.equal(store.reserve(1, 2, 1), false);
-    store.delete(1); assert.equal(store.get(1), undefined); assert.equal(store.reserve(1, 2, 1), false);
-    assert.ok(store.reserve(2, 2, 1)); assert.equal(store.reserve(3, 2, 1), false);
+    store.save(1, { last: 'private' }); assert.equal(store.get(1).last, 'private');
+    store.delete(1); assert.equal(store.get(1), undefined);
     store.mark(42); assert.equal(store.seen(42), true);
   } finally { store.close(); }
 });
@@ -65,6 +64,19 @@ test('new user sees consent notice, selected crop and caption reach analysis, du
     bot.enqueue(update); bot.enqueue(update); await Promise.allSettled([...bot.tasks]);
     assert.equal(calls, 1); assert.ok(store.get(7).last.includes('Пятна'));
     bot.enqueue(update); assert.equal(bot.tasks.size, 0);
+  } finally { store.close(); }
+});
+test('a text reply reuses the temporary image and adds context for a refined assessment', async () => {
+  const store = new Store(':memory:'); const sent = []; const notes = [];
+  const bot = new Bot(cfg, store, { call: async (_method, body) => { sent.push(body); return {}; }, download: async () => Buffer.from('photo'), prepare: async b => b, analyze: async (_img, _cfg, _crop, _lang, note) => { notes.push(note); return result; } });
+  try {
+    store.save(7, { language: 'ru', crop: 'potato' });
+    await bot.handle(message(1, { photo: [{ file_id: 'photo', file_size: 300 }], caption: 'Появилось вчера' }));
+    await bot.handle(message(2, { text: 'Поражено около 20 растений, после дождя' }));
+    assert.equal(notes.length, 2);
+    assert.ok(notes[1].includes('Появилось вчера'));
+    assert.ok(notes[1].includes('20 растений'));
+    assert.ok(sent.some(x => x.text?.includes('Учитываю ваш ответ')));
   } finally { store.close(); }
 });
 test('Gemini quota failures give a clear error and release the user lock', async () => {

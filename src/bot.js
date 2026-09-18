@@ -14,7 +14,7 @@ export class Bot {
       const response = await fetch(`https://api.telegram.org/file/bot${config.token}/${info.file_path}`, { signal: AbortSignal.timeout(20000) });
       return boundedBytes(response, 8 * 1024 * 1024);
     });
-    this.active = new Set(); this.pending = new Set(); this.tasks = new Set(); this.accepting = true;
+    this.active = new Set(); this.sessions = new Map(); this.pending = new Set(); this.tasks = new Set(); this.accepting = true;
   }
   async say(id, text, keyboard) {
     const chunks = messageChunks(text);
@@ -38,6 +38,8 @@ export class Bot {
   }
   async drain() { this.accepting = false; await Promise.allSettled([...this.tasks]); }
   async handle(update) {
+    const expired = Date.now() - 30 * 60 * 1000;
+    for (const [chatId, session] of this.sessions) if (session.updated < expired) this.sessions.delete(chatId);
     const cb = update.callback_query;
     const msg = cb?.message || update.message;
     if (!msg?.chat || !msg.from && !cb?.from) return;
@@ -67,14 +69,32 @@ export class Bot {
     if (command === 'history') return this.say(id, u.last || t.noHistory, menu(lang));
     if (command === 'delete') {
       if (this.active.has(id)) return this.say(id, t.busy);
+      this.sessions.delete(id);
       this.store.delete(id); return this.say(id, t.deleted);
+    }
+    if (msg.text?.trim() && !msg.text.startsWith('/') && this.sessions.has(id)) {
+      if (this.active.has(id)) return this.say(id, t.busy);
+      const session = this.sessions.get(id);
+      this.active.add(id);
+      const started = performance.now();
+      try {
+        await this.say(id, t.refining);
+        const context = `${session.context}\nУточнение пользователя: ${msg.text.trim()}`.slice(-1200);
+        const result = await this.analyze(session.image, this.config, session.crop, lang, context);
+        const text = renderResult(result, lang, (performance.now() - started) / 1000, session.crop);
+        this.sessions.set(id, { ...session, context, updated: Date.now() });
+        this.store.save(id, { last: text });
+        return await this.say(id, text, menu(lang));
+      } catch (error) {
+        console.error(JSON.stringify({ event: 'refinement_failed', service: error.service || 'analysis', status: error.status || 'invalid_response' }));
+        return await this.say(id, error.status === 429 ? t.quota : t.unavailable, menu(lang));
+      } finally { this.active.delete(id); }
     }
     const file = msg.photo?.at(-1) || msg.document;
     if (!file) return this.say(id, t.fallback, menu(lang));
     // Ensure direct photo senders see the data-transfer notice before any upload.
     if (file.file_size > 8 * 1024 * 1024 || (msg.document && !['image/jpeg', 'image/png', 'image/webp'].includes(msg.document.mime_type))) return this.say(id, t.badImage, menu(lang));
     if (this.active.has(id)) return this.say(id, t.busy);
-    if (this.active.size >= 2) return this.say(id, t.capacity);
     if (!this.config.key) return this.say(id, t.unavailable, menu(lang));
     this.active.add(id);
     const started = performance.now();
@@ -83,10 +103,10 @@ export class Bot {
       let image;
       try { image = await this.prepare(await this.download(file)); }
       catch { return await this.say(id, t.badImage, menu(lang)); }
-      if (!this.store.reserve(id, this.config.dailyLimit, this.config.userLimit)) return await this.say(id, t.limit, menu(lang));
       const result = await this.analyze(image, this.config, u.crop, lang, msg.caption || '');
       const text = renderResult(result, lang, (performance.now() - started) / 1000, u.crop);
       await this.say(id, text, menu(lang));
+      this.sessions.set(id, { image, crop: u.crop, context: msg.caption || '', updated: Date.now() });
       this.store.save(id, { last: text });
       console.log(JSON.stringify({ event: 'analysis_complete', seconds: Number(((performance.now() - started) / 1000).toFixed(2)), status: result.status }));
     } catch (error) {

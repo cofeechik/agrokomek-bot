@@ -14,7 +14,6 @@ export function configFrom(env = process.env) {
     token: env.TELEGRAM_BOT_TOKEN || '', key: env.GEMINI_API_KEY || '',
     model: env.GEMINI_MODEL || 'gemini-3.5-flash', mode, baseUrl,
     secret: env.WEBHOOK_SECRET || '', port: integer('PORT', 3000),
-    dailyLimit: integer('DAILY_ANALYSIS_LIMIT', 50), userLimit: integer('USER_DAILY_LIMIT', 5),
     dataPath: env.DATA_PATH || 'data/state.sqlite',
   };
 }

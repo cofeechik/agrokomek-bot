@@ -13,10 +13,13 @@ export const Result = z.object({
   category: z.enum(['healthy', 'disease', 'pest', 'weed', 'stress', 'unknown']),
   label: z.enum(['potato_healthy', 'potato_early_blight', 'potato_late_blight', 'other', 'unknown']),
   urgency: z.enum(['observe', 'soon', 'today', 'unknown']),
+  meaning: z.string().max(420),
   signs: z.array(z.string().max(180)).max(3),
   alternatives: z.array(z.string().max(120)).max(2),
   actions: z.array(z.string().max(220)).min(1).max(3),
-  question: z.string().max(200),
+  checks: z.array(z.string().max(220)).min(1).max(3),
+  escalate: z.string().max(300),
+  questions: z.array(z.string().max(200)).min(1).max(3),
 });
 
 export async function prepareImage(bytes) {
@@ -42,10 +45,12 @@ If selected crop conflicts with visible crop, explicitly say so and prefer uncer
 Describe only visible signs. Never infer an invisible pathogen, soil analysis or percentage accuracy.
 Use label potato_healthy/potato_early_blight/potato_late_blight only for a corresponding potato assessment; otherwise other or unknown.
 Do not treat absence of visible damage as proof of plant health. Healthy means no obvious symptoms in this image.
-Give up to 3 low-risk concrete steps: inspect other leaves, photograph underside, mark and monitor affected plants, consult local agronomist.
+In meaning, explain in plain language what this preliminary result means and what it does not prove.
+Give up to 3 low-risk concrete actions for today. In checks, explain exactly what to inspect on other plants and what additional photos to make.
+In escalate, explain when a local agronomist or laboratory confirmation is needed. Never claim a laboratory test is optional when symptoms spread quickly.
 Do not prescribe pesticides, chemical products, dosages, treatment schedules, uprooting or destruction based on one photo.
 Urgency is a suggested inspection timeframe, not a verified risk forecast. If uncertain use unknown.
-Ask one useful follow-up question about context or request a better photo.
+Ask 2 or 3 short follow-up questions about symptom duration, spread, weather, affected plant share, leaf underside, irrigation or recent treatments. Do not ask for data already present in USER_CONTEXT.
 Keep the response concise. No markdown in fields.\nUSER_CONTEXT=${JSON.stringify(note.slice(0, 600))}`;
 }
 
