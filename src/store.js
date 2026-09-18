@@ -22,7 +22,7 @@ export class Store {
     return user;
   }
   save(id, patch) {
-    const u = { language: 'ru', crop: 'potato', last: null, ...this.get(id), ...patch };
+    const u = { language: 'ru', crop: 'wheat', last: null, ...this.get(id), ...patch };
     this.db.prepare('INSERT OR REPLACE INTO users VALUES (?, ?, ?, ?, ?)').run(String(id), u.language, u.crop, u.last, Date.now());
     return u;
   }

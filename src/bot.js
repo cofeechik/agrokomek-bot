@@ -1,12 +1,13 @@
 import { telegram, boundedBytes } from './api.js';
-import { analyze, prepareImage } from './analysis.js';
-import { crops, copy, cropKeyboard, menu, renderResult, messageChunks } from './ui.js';
+import { analyze, compareImages, prepareImage } from './analysis.js';
+import { crops, copy, cropKeyboard, menu, renderResult, renderComparison, messageChunks } from './ui.js';
 
 export class Bot {
   constructor(config, store, overrides = {}) {
     this.config = config; this.store = store;
     this.call = overrides.call || ((method, body) => telegram(config.token, method, body));
     this.analyze = overrides.analyze || analyze;
+    this.compare = overrides.compare || compareImages;
     this.delay = overrides.delay || (ms => new Promise(resolve => setTimeout(resolve, ms)));
     this.prepare = overrides.prepare || prepareImage;
     this.download = overrides.download || (async file => {
@@ -15,7 +16,7 @@ export class Bot {
       const response = await fetch(`https://api.telegram.org/file/bot${config.token}/${info.file_path}`, { signal: AbortSignal.timeout(20000) });
       return boundedBytes(response, 8 * 1024 * 1024);
     });
-    this.active = new Set(); this.sessions = new Map(); this.pending = new Set(); this.tasks = new Set(); this.accepting = true;
+    this.active = new Set(); this.sessions = new Map(); this.observations = new Map(); this.pending = new Set(); this.tasks = new Set(); this.accepting = true;
   }
   async say(id, text, keyboard) {
     const chunks = messageChunks(text);
@@ -43,32 +44,35 @@ export class Bot {
   }
   failureText(error, t, refining = false) {
     if (error.status === 429) return t.quota;
-    const base = refining && error.code === 'INVALID_ASSESSMENT' ? t.refineFailed : t.unavailable;
-    const safeStatus = error.service === 'Gemini' && (error.status === 'network' || Number.isInteger(error.status)) ? String(error.status) : '';
-    return safeStatus ? `${base}\n\n${t.errorCode}: Gemini ${safeStatus}.` : base;
+    return refining && error.code === 'INVALID_ASSESSMENT' ? t.refineFailed : t.unavailable;
   }
-  async analyzeAvailable(image, crop, lang, note, id, t) {
+  async requestAvailable(execute) {
     try {
-      return { result: await this.analyze(image, this.config, crop, lang, note), fallback: false };
+      return { result: await execute(this.config), fallback: false };
     } catch (error) {
       const fallbackModel = this.config.fallbackModel;
       if ((!this.isTransient(error) && error.code !== 'INVALID_ASSESSMENT') || !fallbackModel || fallbackModel === this.config.model) throw error;
-      await this.say(id, t.switchingModel);
       const fallbackConfig = { ...this.config, model: fallbackModel };
       try {
-        return { result: await this.analyze(image, fallbackConfig, crop, lang, note), fallback: true };
+        return { result: await execute(fallbackConfig), fallback: true };
       } catch (fallbackError) {
         if (!this.isTransient(fallbackError)) throw fallbackError;
         const seconds = Math.min(Math.max(Math.ceil(fallbackError.retryAfter || 2), 1), 20);
-        await this.say(id, t.rateWait.replace('{seconds}', String(seconds)));
         await this.delay(seconds * 1000);
-        return { result: await this.analyze(image, fallbackConfig, crop, lang, note), fallback: true };
+        return { result: await execute(fallbackConfig), fallback: true };
       }
     }
+  }
+  analyzeAvailable(image, crop, lang, note) {
+    return this.requestAvailable(config => this.analyze(image, config, crop, lang, note));
+  }
+  compareAvailable(baseline, current, crop, lang, notes) {
+    return this.requestAvailable(config => this.compare(baseline, current, config, crop, lang, notes));
   }
   async handle(update) {
     const expired = Date.now() - 30 * 60 * 1000;
     for (const [chatId, session] of this.sessions) if (session.updated < expired) this.sessions.delete(chatId);
+    for (const [chatId, observation] of this.observations) if (observation.updated < expired) this.observations.delete(chatId);
     const cb = update.callback_query;
     const msg = cb?.message || update.message;
     if (!msg?.chat || !msg.from && !cb?.from) return;
@@ -77,6 +81,7 @@ export class Bot {
     const sender = cb?.from || msg.from;
     const existing = this.store.get(id);
     const u = existing || this.store.save(id, { language: sender.language_code?.startsWith('kk') ? 'kk' : 'ru' });
+    if (!crops[u.crop]) { u.crop = 'wheat'; this.store.save(id, { crop: u.crop }); }
     const lang = u.language, t = copy[lang];
     const command = cb?.data || msg.text?.split(/\s/)[0]?.split('@')[0]?.replace(/^\//, '') || '';
     const file = msg.photo?.at(-1) || msg.document;
@@ -90,17 +95,25 @@ export class Bot {
     }
     if (command === 'crop') return this.say(id, t.choose, cropKeyboard(lang));
     if (command.startsWith('crop:') && crops[command.slice(5)]) {
+      this.observations.delete(id);
       this.store.save(id, { crop: command.slice(5) });
       return this.say(id, `${crops[command.slice(5)][lang === 'kk' ? 1 : 0]}\n\n${t.ready}`, menu(lang));
     }
-    if (command === 'photo') return this.say(id, t.ready, menu(lang));
+    if (command === 'photo') { this.observations.delete(id); return this.say(id, t.ready, menu(lang)); }
+    if (command === 'observe') {
+      this.observations.set(id, { stage: 'baseline', crop: u.crop, updated: Date.now() });
+      return this.say(id, t.observationStart, menu(lang));
+    }
     if (command === 'help') return this.say(id, t.help, menu(lang));
     if (command === 'privacy') return this.say(id, t.privacy, menu(lang));
     if (command === 'history') return this.say(id, u.last || t.noHistory, menu(lang));
     if (command === 'delete') {
       if (this.active.has(id)) return this.say(id, t.busy);
-      this.sessions.delete(id);
+      this.sessions.delete(id); this.observations.delete(id);
       this.store.delete(id); return this.say(id, t.deleted);
+    }
+    if (msg.text?.trim() && !msg.text.startsWith('/') && this.observations.has(id)) {
+      return this.say(id, this.observations.get(id).stage === 'baseline' ? t.observationStart : t.baselineReady, menu(lang));
     }
     if (msg.text?.trim() && !msg.text.startsWith('/') && this.sessions.has(id)) {
       if (this.active.has(id)) return this.say(id, t.busy);
@@ -110,8 +123,8 @@ export class Bot {
       try {
         await this.say(id, t.refining);
         const context = `${session.context}\nУточнение пользователя: ${msg.text.trim()}`.slice(-1200);
-        const analyzed = await this.analyzeAvailable(session.image, session.crop, lang, context, id, t);
-        const text = renderResult(analyzed.result, lang, (performance.now() - started) / 1000, session.crop, { fallback: analyzed.fallback });
+        const analyzed = await this.analyzeAvailable(session.image, session.crop, lang, context);
+        const text = renderResult(analyzed.result, lang, (performance.now() - started) / 1000);
         this.sessions.set(id, { ...session, context, updated: Date.now() });
         this.store.save(id, { last: text });
         return await this.say(id, text, menu(lang));
@@ -129,14 +142,30 @@ export class Bot {
     const started = performance.now();
     try {
       if (!existing) await this.say(id, t.firstPhoto);
-      await this.say(id, t.processing);
       let image;
       try { image = await this.prepare(await this.download(file)); }
       catch { return await this.say(id, t.badImage, menu(lang)); }
       const context = msg.caption?.trim() || '';
+      const observation = this.observations.get(id);
+      if (observation?.stage === 'baseline') {
+        this.observations.set(id, { ...observation, stage: 'current', baseline: image, baselineNote: context, updated: Date.now() });
+        return await this.say(id, t.baselineReady, menu(lang));
+      }
+      if (observation?.stage === 'current') {
+        await this.say(id, t.comparing);
+        const compared = await this.compareAvailable(observation.baseline, image, observation.crop, lang, { baseline: observation.baselineNote || '', current: context });
+        const text = renderComparison(compared.result, lang, (performance.now() - started) / 1000);
+        this.observations.delete(id);
+        this.sessions.set(id, { image, crop: observation.crop, context, updated: Date.now() });
+        this.store.save(id, { last: text });
+        await this.say(id, text, menu(lang));
+        console.log(JSON.stringify({ event: 'comparison_complete', seconds: Number(((performance.now() - started) / 1000).toFixed(2)), status: compared.result.status, fallback: compared.fallback }));
+        return;
+      }
+      await this.say(id, t.processing);
       this.sessions.set(id, { image, crop: u.crop, context, updated: Date.now() });
-      const analyzed = await this.analyzeAvailable(image, u.crop, lang, context, id, t);
-      const text = renderResult(analyzed.result, lang, (performance.now() - started) / 1000, u.crop, { fallback: analyzed.fallback });
+      const analyzed = await this.analyzeAvailable(image, u.crop, lang, context);
+      const text = renderResult(analyzed.result, lang, (performance.now() - started) / 1000);
       await this.say(id, text, menu(lang));
       this.store.save(id, { last: text });
       console.log(JSON.stringify({ event: 'analysis_complete', seconds: Number(((performance.now() - started) / 1000).toFixed(2)), status: analyzed.result.status, fallback: analyzed.fallback }));

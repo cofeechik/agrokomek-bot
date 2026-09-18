@@ -58,7 +58,7 @@ test('store saves and deletes personal state while retaining update deduplicatio
 const message = (id, extra = {}) => ({ update_id: id, message: { message_id: id, chat: { id: 7, type: 'private' }, from: { id: 7, language_code: 'ru' }, ...extra } });
 test('a new user photo is analyzed immediately, its caption is used and a duplicate is ignored', async () => {
   const store = new Store(':memory:'); const sent = []; let calls = 0;
-  const bot = new Bot(cfg, store, { call: async (method, body) => { sent.push({ method, body }); return {}; }, download: async () => Buffer.from('photo'), prepare: async b => b, analyze: async (_img, _cfg, crop, lang, note) => { calls++; assert.equal(crop, 'potato'); assert.equal(lang, 'ru'); assert.equal(note, 'три дня'); return result; } });
+  const bot = new Bot(cfg, store, { call: async (method, body) => { sent.push({ method, body }); return {}; }, download: async () => Buffer.from('photo'), prepare: async b => b, analyze: async (_img, _cfg, crop, lang, note) => { calls++; assert.equal(crop, 'wheat'); assert.equal(lang, 'ru'); assert.equal(note, 'три дня'); return result; } });
   try {
     const update = message(1, { photo: [{ file_id: 'photo', file_size: 300 }], caption: '  три дня  ' });
     bot.enqueue(update); bot.enqueue(update); await Promise.allSettled([...bot.tasks]);
@@ -86,10 +86,10 @@ test('Gemini quota failures give a clear error and release the user lock', async
   const bot = new Bot(cfg, store, { call: async (_m, b) => { if (b.text) texts.push(b.text); return {}; }, download: async () => Buffer.from('x'), prepare: async b => b, analyze: async () => { throw Object.assign(new Error('hidden'), { status: 429, service: 'Gemini' }); } });
   try {
     await bot.handle(message(1, { photo: [{ file_id: 'x' }] }));
-    assert.ok(texts.at(-1).includes('квота')); assert.equal(bot.active.size, 0); assert.equal(store.get(7).last, null);
+    assert.ok(texts.at(-1).includes('временно недоступен')); assert.equal(bot.active.size, 0); assert.equal(store.get(7).last, null);
   } finally { store.close(); }
 });
-test('a Gemini 429 switches to the fallback model and discloses it in the result', async () => {
+test('a Gemini 429 silently switches to the fallback model', async () => {
   const store = new Store(':memory:'); store.save(7, {}); const texts = []; const models = [];
   const fallbackCfg = { ...cfg, fallbackModel: 'gemini-3.5-flash-lite' };
   const bot = new Bot(fallbackCfg, store, { call: async (_m, b) => { if (b.text) texts.push(b.text); return {}; }, download: async () => Buffer.from('x'), prepare: async b => b, analyze: async (_image, config) => {
@@ -100,9 +100,27 @@ test('a Gemini 429 switches to the fallback model and discloses it in the result
   try {
     await bot.handle(message(1, { photo: [{ file_id: 'x' }] }));
     assert.deepEqual(models, ['fake', 'gemini-3.5-flash-lite']);
-    assert.ok(texts.some(text => text.includes('резервную модель')));
-    assert.ok(texts.at(-1).includes('Flash-Lite'));
+    assert.ok(!texts.some(text => text.includes('модел')));
+    assert.ok(texts.at(-1).includes('Пятна'));
     assert.ok(store.get(7).last.includes('Пятна'));
+  } finally { store.close(); }
+});
+test('field observation accepts an earlier and current image and renders their comparison', async () => {
+  const store = new Store(':memory:'); store.save(7, { crop: 'flax' }); const texts = []; const images = [];
+  const comparison = { status: 'comparison', crop: 'Лён', title: 'Состояние ухудшилось', trend: 'worse', summary: 'На новом фото повреждение заметнее.', changes: ['Пятен стало больше'], actions: ['Осмотрите соседние растения'], checks: ['Повторите фото завтра'], questions: ['Когда появились новые пятна?'] };
+  const bot = new Bot(cfg, store, { call: async (_m, body) => { if (body.text) texts.push(body.text); return {}; }, download: async file => Buffer.from(file.file_id), prepare: async bytes => bytes, compare: async (baseline, current, _config, crop, lang, notes) => {
+    images.push(baseline.toString(), current.toString());
+    assert.equal(crop, 'flax'); assert.equal(lang, 'ru'); assert.equal(notes.baseline, 'пять дней назад'); assert.equal(notes.current, 'сегодня');
+    return comparison;
+  } });
+  try {
+    await bot.handle(message(1, { text: '/start' }));
+    await bot.handle({ update_id: 2, callback_query: { id: 'cb', from: { id: 7, language_code: 'ru' }, data: 'observe', message: { message_id: 2, chat: { id: 7, type: 'private' } } } });
+    await bot.handle(message(3, { photo: [{ file_id: 'old' }], caption: 'пять дней назад' }));
+    await bot.handle(message(4, { photo: [{ file_id: 'new' }], caption: 'сегодня' }));
+    assert.deepEqual(images, ['old', 'new']);
+    assert.ok(texts.at(-1).includes('Пятен стало больше'));
+    assert.equal(bot.observations.has(7), false);
   } finally { store.close(); }
 });
 test('temporary Gemini failures retry the fallback once after a short delay', async () => {
