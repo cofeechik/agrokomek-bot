@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: agrokomek-bot
+    runtime: node
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: 24.20.0
+      - key: BOT_MODE
+        value: webhook
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-3.5-flash
+      - key: WEBHOOK_SECRET
+        generateValue: true
+      - key: DAILY_ANALYSIS_LIMIT
+        value: '50'
+      - key: USER_DAILY_LIMIT
+        value: '5'

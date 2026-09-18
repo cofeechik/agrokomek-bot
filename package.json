@@ -1,0 +1,15 @@
+{
+  "name": "agrokomek",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Russian and Kazakh Telegram plant-photo triage for Aqmola Hub AgriTech AI Hackathon",
+  "engines": { "node": ">=24 <25" },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env src/main.js",
+    "check": "node --env-file-if-exists=.env scripts/check.js",
+    "test": "node --test",
+    "eval": "node --env-file-if-exists=.env scripts/evaluate.js"
+  },
+  "dependencies": { "sharp": "^0.35.4", "zod": "^4.1.12" }
+}
