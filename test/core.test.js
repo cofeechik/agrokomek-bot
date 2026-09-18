@@ -105,6 +105,21 @@ test('a Gemini 429 switches to the fallback model and discloses it in the result
     assert.ok(store.get(7).last.includes('Пятна'));
   } finally { store.close(); }
 });
+test('temporary Gemini failures retry the fallback once after a short delay', async () => {
+  const store = new Store(':memory:'); store.save(7, {}); const models = []; const delays = [];
+  const fallbackCfg = { ...cfg, fallbackModel: 'gemini-3.5-flash-lite' }; let attempts = 0;
+  const bot = new Bot(fallbackCfg, store, { call: async () => ({}), delay: async ms => { delays.push(ms); }, download: async () => Buffer.from('x'), prepare: async b => b, analyze: async (_image, config) => {
+    attempts++; models.push(config.model);
+    if (attempts < 3) throw Object.assign(new Error('hidden'), { status: 503, service: 'Gemini' });
+    return result;
+  } });
+  try {
+    await bot.handle(message(1, { photo: [{ file_id: 'x' }] }));
+    assert.deepEqual(models, ['fake', 'gemini-3.5-flash-lite', 'gemini-3.5-flash-lite']);
+    assert.deepEqual(delays, [2000]);
+    assert.ok(store.get(7).last.includes('Пятна'));
+  } finally { store.close(); }
+});
 test('webhook rejects forged calls and accepts valid Telegram updates', async () => {
   const c = configFrom({ BOT_MODE: 'webhook', WEBHOOK_URL: 'https://example.com', WEBHOOK_SECRET: 'test-secret-12345678' });
   const received = []; const server = makeServer(c, { enqueue: u => { received.push(u); return true; } }, { ready: true });

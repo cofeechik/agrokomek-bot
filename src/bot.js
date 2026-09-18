@@ -38,19 +38,28 @@ export class Bot {
     return true;
   }
   async drain() { this.accepting = false; await Promise.allSettled([...this.tasks]); }
+  isTransient(error) {
+    return error?.service === 'Gemini' && (error.status === 'network' || error.status === 408 || error.status === 429 || (Number(error.status) >= 500 && Number(error.status) < 600));
+  }
+  failureText(error, t, refining = false) {
+    if (error.status === 429) return t.quota;
+    const base = refining && error.code === 'INVALID_ASSESSMENT' ? t.refineFailed : t.unavailable;
+    const safeStatus = error.service === 'Gemini' && (error.status === 'network' || Number.isInteger(error.status)) ? String(error.status) : '';
+    return safeStatus ? `${base}\n\n${t.errorCode}: Gemini ${safeStatus}.` : base;
+  }
   async analyzeAvailable(image, crop, lang, note, id, t) {
     try {
       return { result: await this.analyze(image, this.config, crop, lang, note), fallback: false };
     } catch (error) {
       const fallbackModel = this.config.fallbackModel;
-      if (error.status !== 429 || !fallbackModel || fallbackModel === this.config.model) throw error;
+      if ((!this.isTransient(error) && error.code !== 'INVALID_ASSESSMENT') || !fallbackModel || fallbackModel === this.config.model) throw error;
       await this.say(id, t.switchingModel);
       const fallbackConfig = { ...this.config, model: fallbackModel };
       try {
         return { result: await this.analyze(image, fallbackConfig, crop, lang, note), fallback: true };
       } catch (fallbackError) {
-        const seconds = Math.min(Math.ceil(fallbackError.retryAfter || 0), 20);
-        if (fallbackError.status !== 429 || seconds < 1) throw fallbackError;
+        if (!this.isTransient(fallbackError)) throw fallbackError;
+        const seconds = Math.min(Math.max(Math.ceil(fallbackError.retryAfter || 2), 1), 20);
         await this.say(id, t.rateWait.replace('{seconds}', String(seconds)));
         await this.delay(seconds * 1000);
         return { result: await this.analyze(image, fallbackConfig, crop, lang, note), fallback: true };
@@ -108,7 +117,7 @@ export class Bot {
         return await this.say(id, text, menu(lang));
       } catch (error) {
         console.error(JSON.stringify({ event: 'refinement_failed', service: error.service || 'analysis', status: error.status || 'invalid_response' }));
-        return await this.say(id, error.status === 429 ? t.quota : error.code === 'INVALID_ASSESSMENT' ? t.refineFailed : t.unavailable, menu(lang));
+        return await this.say(id, this.failureText(error, t, true), menu(lang));
       } finally { this.active.delete(id); }
     }
     if (!file) return this.say(id, t.fallback, menu(lang));
@@ -133,7 +142,7 @@ export class Bot {
       console.log(JSON.stringify({ event: 'analysis_complete', seconds: Number(((performance.now() - started) / 1000).toFixed(2)), status: analyzed.result.status, fallback: analyzed.fallback }));
     } catch (error) {
       console.error(JSON.stringify({ event: 'analysis_failed', service: error.service || 'analysis', status: error.status || 'invalid_response' }));
-      await this.say(id, error.status === 429 ? t.quota : t.unavailable, menu(lang));
+      await this.say(id, this.failureText(error, t), menu(lang));
     } finally { this.active.delete(id); }
   }
 }
