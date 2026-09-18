@@ -12,5 +12,6 @@ try {
   const models = data.models?.filter(m => m.supportedGenerationMethods?.includes('generateContent') && m.name.includes('flash')).map(m => m.name.replace('models/', '')) || [];
   console.log('Gemini: OK. Available Flash models:', models.join(', '));
   if (!models.includes(c.model)) { console.log(`Configured model is not available: ${c.model}`); failed = true; }
+  if (c.fallbackModel && !models.includes(c.fallbackModel)) { console.log(`Configured fallback model is not available: ${c.fallbackModel}`); failed = true; }
 } catch (error) { console.log(`Gemini: ${error.message}`); failed = true; }
 process.exitCode = failed ? 1 : 0;

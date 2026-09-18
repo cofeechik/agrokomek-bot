@@ -56,15 +56,15 @@ test('store saves and deletes personal state while retaining update deduplicatio
   } finally { store.close(); }
 });
 const message = (id, extra = {}) => ({ update_id: id, message: { message_id: id, chat: { id: 7, type: 'private' }, from: { id: 7, language_code: 'ru' }, ...extra } });
-test('new user sees consent notice, selected crop and caption reach analysis, duplicate is ignored', async () => {
+test('a new user photo is analyzed immediately, its caption is used and a duplicate is ignored', async () => {
   const store = new Store(':memory:'); const sent = []; let calls = 0;
   const bot = new Bot(cfg, store, { call: async (method, body) => { sent.push({ method, body }); return {}; }, download: async () => Buffer.from('photo'), prepare: async b => b, analyze: async (_img, _cfg, crop, lang, note) => { calls++; assert.equal(crop, 'potato'); assert.equal(lang, 'ru'); assert.equal(note, 'три дня'); return result; } });
   try {
-    await bot.handle(message(1, { photo: [{ file_id: 'photo', file_size: 300 }] }));
-    assert.equal(calls, 0); assert.ok(sent.at(-1).body.text.includes('Google Gemini'));
-    const update = message(2, { photo: [{ file_id: 'photo', file_size: 300 }], caption: 'три дня' });
+    const update = message(1, { photo: [{ file_id: 'photo', file_size: 300 }], caption: '  три дня  ' });
     bot.enqueue(update); bot.enqueue(update); await Promise.allSettled([...bot.tasks]);
     assert.equal(calls, 1); assert.ok(store.get(7).last.includes('Пятна'));
+    assert.ok(sent.some(x => x.body.text?.includes('Google Gemini')));
+    assert.ok(sent.at(-1).body.text.includes('Пятна'));
     bot.enqueue(update); assert.equal(bot.tasks.size, 0);
   } finally { store.close(); }
 });
@@ -86,7 +86,23 @@ test('Gemini quota failures give a clear error and release the user lock', async
   const bot = new Bot(cfg, store, { call: async (_m, b) => { if (b.text) texts.push(b.text); return {}; }, download: async () => Buffer.from('x'), prepare: async b => b, analyze: async () => { throw Object.assign(new Error('hidden'), { status: 429, service: 'Gemini' }); } });
   try {
     await bot.handle(message(1, { photo: [{ file_id: 'x' }] }));
-    assert.ok(texts.at(-1).includes('лимита')); assert.equal(bot.active.size, 0); assert.equal(store.get(7).last, null);
+    assert.ok(texts.at(-1).includes('квота')); assert.equal(bot.active.size, 0); assert.equal(store.get(7).last, null);
+  } finally { store.close(); }
+});
+test('a Gemini 429 switches to the fallback model and discloses it in the result', async () => {
+  const store = new Store(':memory:'); store.save(7, {}); const texts = []; const models = [];
+  const fallbackCfg = { ...cfg, fallbackModel: 'gemini-3.5-flash-lite' };
+  const bot = new Bot(fallbackCfg, store, { call: async (_m, b) => { if (b.text) texts.push(b.text); return {}; }, download: async () => Buffer.from('x'), prepare: async b => b, analyze: async (_image, config) => {
+    models.push(config.model);
+    if (config.model === cfg.model) throw Object.assign(new Error('hidden'), { status: 429, service: 'Gemini' });
+    return result;
+  } });
+  try {
+    await bot.handle(message(1, { photo: [{ file_id: 'x' }] }));
+    assert.deepEqual(models, ['fake', 'gemini-3.5-flash-lite']);
+    assert.ok(texts.some(text => text.includes('резервную модель')));
+    assert.ok(texts.at(-1).includes('Flash-Lite'));
+    assert.ok(store.get(7).last.includes('Пятна'));
   } finally { store.close(); }
 });
 test('webhook rejects forged calls and accepts valid Telegram updates', async () => {

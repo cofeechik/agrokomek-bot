@@ -7,6 +7,7 @@ export class Bot {
     this.config = config; this.store = store;
     this.call = overrides.call || ((method, body) => telegram(config.token, method, body));
     this.analyze = overrides.analyze || analyze;
+    this.delay = overrides.delay || (ms => new Promise(resolve => setTimeout(resolve, ms)));
     this.prepare = overrides.prepare || prepareImage;
     this.download = overrides.download || (async file => {
       const info = await this.call('getFile', { file_id: file.file_id });
@@ -37,6 +38,25 @@ export class Bot {
     return true;
   }
   async drain() { this.accepting = false; await Promise.allSettled([...this.tasks]); }
+  async analyzeAvailable(image, crop, lang, note, id, t) {
+    try {
+      return { result: await this.analyze(image, this.config, crop, lang, note), fallback: false };
+    } catch (error) {
+      const fallbackModel = this.config.fallbackModel;
+      if (error.status !== 429 || !fallbackModel || fallbackModel === this.config.model) throw error;
+      await this.say(id, t.switchingModel);
+      const fallbackConfig = { ...this.config, model: fallbackModel };
+      try {
+        return { result: await this.analyze(image, fallbackConfig, crop, lang, note), fallback: true };
+      } catch (fallbackError) {
+        const seconds = Math.min(Math.ceil(fallbackError.retryAfter || 0), 20);
+        if (fallbackError.status !== 429 || seconds < 1) throw fallbackError;
+        await this.say(id, t.rateWait.replace('{seconds}', String(seconds)));
+        await this.delay(seconds * 1000);
+        return { result: await this.analyze(image, fallbackConfig, crop, lang, note), fallback: true };
+      }
+    }
+  }
   async handle(update) {
     const expired = Date.now() - 30 * 60 * 1000;
     for (const [chatId, session] of this.sessions) if (session.updated < expired) this.sessions.delete(chatId);
@@ -50,8 +70,9 @@ export class Bot {
     const u = existing || this.store.save(id, { language: sender.language_code?.startsWith('kk') ? 'kk' : 'ru' });
     const lang = u.language, t = copy[lang];
     const command = cb?.data || msg.text?.split(/\s/)[0]?.split('@')[0]?.replace(/^\//, '') || '';
+    const file = msg.photo?.at(-1) || msg.document;
     if (cb) await this.call('answerCallbackQuery', { callback_query_id: cb.id });
-    if (!existing && command !== 'start') return this.say(id, t.welcome + '\n\n' + t.ready, cropKeyboard(lang));
+    if (!existing && command !== 'start' && !file) return this.say(id, t.welcome + '\n\n' + t.ready, cropKeyboard(lang));
     if (command === 'start') return this.say(id, t.welcome, cropKeyboard(lang));
     if (command === 'language') return this.say(id, 'Тілді таңдаңыз / Выберите язык', { inline_keyboard: [[{ text: 'Қазақша', callback_data: 'lang:kk' }, { text: 'Русский', callback_data: 'lang:ru' }]] });
     if (['lang:ru', 'lang:kk'].includes(command)) {
@@ -80,8 +101,8 @@ export class Bot {
       try {
         await this.say(id, t.refining);
         const context = `${session.context}\nУточнение пользователя: ${msg.text.trim()}`.slice(-1200);
-        const result = await this.analyze(session.image, this.config, session.crop, lang, context);
-        const text = renderResult(result, lang, (performance.now() - started) / 1000, session.crop);
+        const analyzed = await this.analyzeAvailable(session.image, session.crop, lang, context, id, t);
+        const text = renderResult(analyzed.result, lang, (performance.now() - started) / 1000, session.crop, { fallback: analyzed.fallback });
         this.sessions.set(id, { ...session, context, updated: Date.now() });
         this.store.save(id, { last: text });
         return await this.say(id, text, menu(lang));
@@ -90,7 +111,6 @@ export class Bot {
         return await this.say(id, error.status === 429 ? t.quota : error.code === 'INVALID_ASSESSMENT' ? t.refineFailed : t.unavailable, menu(lang));
       } finally { this.active.delete(id); }
     }
-    const file = msg.photo?.at(-1) || msg.document;
     if (!file) return this.say(id, t.fallback, menu(lang));
     // Ensure direct photo senders see the data-transfer notice before any upload.
     if (file.file_size > 8 * 1024 * 1024 || (msg.document && !['image/jpeg', 'image/png', 'image/webp'].includes(msg.document.mime_type))) return this.say(id, t.badImage, menu(lang));
@@ -99,16 +119,18 @@ export class Bot {
     this.active.add(id);
     const started = performance.now();
     try {
+      if (!existing) await this.say(id, t.firstPhoto);
       await this.say(id, t.processing);
       let image;
       try { image = await this.prepare(await this.download(file)); }
       catch { return await this.say(id, t.badImage, menu(lang)); }
-      const result = await this.analyze(image, this.config, u.crop, lang, msg.caption || '');
-      const text = renderResult(result, lang, (performance.now() - started) / 1000, u.crop);
+      const context = msg.caption?.trim() || '';
+      this.sessions.set(id, { image, crop: u.crop, context, updated: Date.now() });
+      const analyzed = await this.analyzeAvailable(image, u.crop, lang, context, id, t);
+      const text = renderResult(analyzed.result, lang, (performance.now() - started) / 1000, u.crop, { fallback: analyzed.fallback });
       await this.say(id, text, menu(lang));
-      this.sessions.set(id, { image, crop: u.crop, context: msg.caption || '', updated: Date.now() });
       this.store.save(id, { last: text });
-      console.log(JSON.stringify({ event: 'analysis_complete', seconds: Number(((performance.now() - started) / 1000).toFixed(2)), status: result.status }));
+      console.log(JSON.stringify({ event: 'analysis_complete', seconds: Number(((performance.now() - started) / 1000).toFixed(2)), status: analyzed.result.status, fallback: analyzed.fallback }));
     } catch (error) {
       console.error(JSON.stringify({ event: 'analysis_failed', service: error.service || 'analysis', status: error.status || 'invalid_response' }));
       await this.say(id, error.status === 429 ? t.quota : t.unavailable, menu(lang));

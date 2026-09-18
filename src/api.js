@@ -1,5 +1,10 @@
 export class ServiceError extends Error {
-  constructor(service, status) { super(`${service} request failed (${status})`); this.service = service; this.status = status; }
+  constructor(service, status, options = {}) {
+    super(`${service} request failed (${status})`);
+    this.service = service;
+    this.status = status;
+    this.retryAfter = options.retryAfter || 0;
+  }
 }
 
 export async function telegram(token, method, body = {}, fetcher = fetch) {
@@ -26,7 +31,12 @@ export async function geminiRequest(key, path, body, fetcher = fetch) {
   } catch { throw new ServiceError('Gemini', 'network'); }
   let data;
   try { data = await response.json(); } catch { throw new ServiceError('Gemini', response.status); }
-  if (!response.ok) throw new ServiceError('Gemini', response.status);
+  if (!response.ok) {
+    const retryHeader = Number(response.headers.get('retry-after')) || 0;
+    const retryDetail = data?.error?.details?.find(detail => typeof detail?.retryDelay === 'string')?.retryDelay;
+    const retrySeconds = retryDetail?.match(/^(\d+(?:\.\d+)?)s$/)?.[1];
+    throw new ServiceError('Gemini', response.status, { retryAfter: retryHeader || Number(retrySeconds) || 0 });
+  }
   return data;
 }
 

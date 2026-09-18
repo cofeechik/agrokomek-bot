@@ -12,7 +12,8 @@ export function configFrom(env = process.env) {
   }
   return {
     token: env.TELEGRAM_BOT_TOKEN || '', key: env.GEMINI_API_KEY || '',
-    model: env.GEMINI_MODEL || 'gemini-3.5-flash', mode, baseUrl,
+    model: env.GEMINI_MODEL || 'gemini-3.5-flash',
+    fallbackModel: env.GEMINI_FALLBACK_MODEL || 'gemini-3.5-flash-lite', mode, baseUrl,
     secret: env.WEBHOOK_SECRET || '', port: integer('PORT', 3000),
     dataPath: env.DATA_PATH || 'data/state.sqlite',
   };
