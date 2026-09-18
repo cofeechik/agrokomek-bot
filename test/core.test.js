@@ -43,7 +43,9 @@ test('Gemini sends photo with schema and rejects truncated output', async () => 
   assert.equal((await analyze(Buffer.from('image'), cfg, 'potato', 'ru', 'spots', request)).label, result.label);
   assert.equal(body.contents[0].parts[1].inlineData.mimeType, 'image/jpeg');
   assert.ok(body.generationConfig.responseJsonSchema.required.includes('status'));
-  await assert.rejects(analyze(Buffer.from('x'), cfg, 'potato', 'ru', '', async () => ({ candidates: [{ finishReason: 'MAX_TOKENS' }] })));
+  let attempts = 0;
+  await assert.rejects(analyze(Buffer.from('x'), cfg, 'potato', 'ru', '', async () => { attempts++; return { candidates: [{ finishReason: 'MAX_TOKENS' }] }; }), error => error.code === 'INVALID_ASSESSMENT');
+  assert.equal(attempts, 2);
 });
 test('store saves and deletes personal state while retaining update deduplication', () => {
   const store = new Store(':memory:');

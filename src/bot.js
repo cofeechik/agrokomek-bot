@@ -87,7 +87,7 @@ export class Bot {
         return await this.say(id, text, menu(lang));
       } catch (error) {
         console.error(JSON.stringify({ event: 'refinement_failed', service: error.service || 'analysis', status: error.status || 'invalid_response' }));
-        return await this.say(id, error.status === 429 ? t.quota : t.unavailable, menu(lang));
+        return await this.say(id, error.status === 429 ? t.quota : error.code === 'INVALID_ASSESSMENT' ? t.refineFailed : t.unavailable, menu(lang));
       } finally { this.active.delete(id); }
     }
     const file = msg.photo?.at(-1) || msg.document;

@@ -65,13 +65,23 @@ export function validateResult(raw) {
 export async function analyze(image, { key, model }, crop, language, note, request = geminiRequest) {
   const schema = z.toJSONSchema(Result);
   delete schema.$schema;
-  const data = await request(key, `models/${encodeURIComponent(model)}:generateContent`, {
-    systemInstruction: { parts: [{ text: analysisPrompt(crop, language, note) }] },
-    contents: [{ role: 'user', parts: [{ text: 'Assess this plant photograph.' }, { inlineData: { mimeType: 'image/jpeg', data: image.toString('base64') } }] }],
-    generationConfig: { temperature: 0.1, maxOutputTokens: 2048, responseMimeType: 'application/json', responseJsonSchema: schema },
-  });
-  const candidate = data.candidates?.[0];
-  if (candidate?.finishReason !== 'STOP') throw new Error('Incomplete model response');
-  const text = candidate.content?.parts?.filter(p => !p.thought).map(p => p.text || '').join('');
-  return validateResult(JSON.parse(text));
+  let lastError;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const data = await request(key, `models/${encodeURIComponent(model)}:generateContent`, {
+        systemInstruction: { parts: [{ text: analysisPrompt(crop, language, note) }] },
+        contents: [{ role: 'user', parts: [{ text: attempt ? 'Return the complete concise assessment. The previous response was incomplete or invalid.' : 'Assess this plant photograph.' }, { inlineData: { mimeType: 'image/jpeg', data: image.toString('base64') } }] }],
+        generationConfig: { thinkingConfig: { thinkingLevel: 'MINIMAL' }, maxOutputTokens: 4096, responseMimeType: 'application/json', responseJsonSchema: schema },
+      });
+      const candidate = data.candidates?.[0];
+      if (candidate?.finishReason !== 'STOP') throw new Error(`Incomplete model response: ${candidate?.finishReason || 'missing'}`);
+      const text = candidate.content?.parts?.filter(p => !p.thought).map(p => p.text || '').join('');
+      return validateResult(JSON.parse(text));
+    } catch (error) {
+      lastError = error;
+      // Provider errors have a service field. Retrying those can double quota use without fixing auth/rate limits.
+      if (error.service) throw error;
+    }
+  }
+  throw Object.assign(new Error('Gemini returned an invalid structured assessment twice'), { code: 'INVALID_ASSESSMENT', cause: lastError });
 }

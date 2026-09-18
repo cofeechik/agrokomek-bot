@@ -21,7 +21,7 @@ export async function geminiRequest(key, path, body, fetcher = fetch) {
   try {
     response = await fetcher(`https://generativelanguage.googleapis.com/v1beta/${path}`, {
       method: body ? 'POST' : 'GET', headers: { 'x-goog-api-key': key, 'content-type': 'application/json' },
-      ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(45000),
+      ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(75000),
     });
   } catch { throw new ServiceError('Gemini', 'network'); }
   let data;
