@@ -4,7 +4,7 @@ import sharp from 'sharp';
 import { Store } from '../src/store.js';
 import { Bot } from '../src/bot.js';
 import { prepareImage, validateResult, analyze } from '../src/analysis.js';
-import { renderResult, messageChunks } from '../src/ui.js';
+import { crops, cropKeyboard, renderResult, messageChunks } from '../src/ui.js';
 import { makeServer } from '../src/server.js';
 import { configFrom } from '../src/config.js';
 
@@ -56,6 +56,19 @@ test('store saves and deletes personal state while retaining update deduplicatio
   } finally { store.close(); }
 });
 const message = (id, extra = {}) => ({ update_id: id, message: { message_id: id, chat: { id: 7, type: 'private' }, from: { id: 7, language_code: 'ru' }, ...extra } });
+test('other plant is selectable in both languages and reaches photo analysis', async () => {
+  assert.ok(crops.other);
+  assert.ok(cropKeyboard('ru').inline_keyboard.some(row => row[0].callback_data === 'crop:other' && row[0].text.includes('Другое')));
+  assert.ok(cropKeyboard('kk').inline_keyboard.some(row => row[0].callback_data === 'crop:other' && row[0].text.includes('Басқа')));
+  const store = new Store(':memory:'); store.save(7, {}); const selected = [];
+  const bot = new Bot(cfg, store, { call: async () => ({}), download: async () => Buffer.from('photo'), prepare: async bytes => bytes, analyze: async (_image, _cfg, crop) => { selected.push(crop); return result; } });
+  try {
+    await bot.handle({ update_id: 1, callback_query: { id: 'cb', from: { id: 7, language_code: 'ru' }, data: 'crop:other', message: { message_id: 1, chat: { id: 7, type: 'private' } } } });
+    await bot.handle(message(2, { photo: [{ file_id: 'photo', file_size: 300 }] }));
+    assert.equal(store.get(7).crop, 'other');
+    assert.deepEqual(selected, ['other']);
+  } finally { store.close(); }
+});
 test('a new user photo is analyzed immediately, its caption is used and a duplicate is ignored', async () => {
   const store = new Store(':memory:'); const sent = []; let calls = 0;
   const bot = new Bot(cfg, store, { call: async (method, body) => { sent.push({ method, body }); return {}; }, download: async () => Buffer.from('photo'), prepare: async b => b, analyze: async (_img, _cfg, crop, lang, note) => { calls++; assert.equal(crop, 'wheat'); assert.equal(lang, 'ru'); assert.equal(note, 'три дня'); return result; } });
