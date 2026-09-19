@@ -14,6 +14,8 @@ export const copy = {
     firstPhoto: 'Фото принято и будет передано Google Gemini для анализа. Не отправляйте лица и личные документы.',
     busy: '⏳ Предыдущее фото ещё обрабатывается. Дождитесь результата.',
     refining: '🔎 Учитываю ваш ответ и уточняю оценку…',
+    followUpHeading: 'Уточнение', understoodPrefix: 'Понял:', followUpUpdate: 'Что это меняет', followUpStep: 'Что сделать',
+    followUpChange: { updated: 'Новая информация меняет предварительную оценку.', unchanged: 'Предварительная оценка пока не меняется.', uncertain: 'Пока нельзя уверенно пересмотреть оценку.' },
     badImage: 'Не удалось прочитать фото. Пришлите чёткое изображение JPEG, PNG или WebP до 8 МБ.',
     unavailable: 'Анализ сейчас недоступен. Фото не проанализировано — попробуйте позже.',
     refineFailed: 'Не удалось сформировать уточнённый ответ. Фото ещё доступно — отправьте уточнение ещё раз или пришлите новое фото.',
@@ -43,6 +45,8 @@ export const copy = {
     firstPhoto: 'Сурет қабылданды және талдау үшін Google Gemini қызметіне жіберіледі. Адамдардың бетін және жеке құжаттарды жібермеңіз.',
     busy: '⏳ Алдыңғы сурет әлі өңделуде. Нәтижені күтіңіз.',
     refining: '🔎 Жауабыңызды ескеріп, бағалауды нақтылап жатырмын…',
+    followUpHeading: 'Нақтылау', understoodPrefix: 'Түсіндім:', followUpUpdate: 'Бұл нені өзгертеді', followUpStep: 'Не істеу керек',
+    followUpChange: { updated: 'Жаңа ақпарат алдын ала бағалауды өзгертеді.', unchanged: 'Алдын ала бағалау әзірге өзгермейді.', uncertain: 'Бағалауды сенімді түрде өзгертуге дерек жетпейді.' },
     badImage: 'Суретті оқу мүмкін болмады. 8 МБ дейін анық JPEG, PNG немесе WebP жіберіңіз.',
     unavailable: 'Талдау қазір қолжетімсіз. Сурет талданған жоқ. Кейін қайталап көріңіз.',
     refineFailed: 'Нақты жауапты дайындау мүмкін болмады. Сурет әлі қолжетімді — нақтылауды қайта жіберіңіз немесе жаңа сурет жіберіңіз.',
@@ -101,4 +105,13 @@ export function renderComparison(r, lang, seconds) {
     + `\n\n<b>${t.meaning}</b>\n${e(r.summary)}`
     + section(t.changes, r.changes) + section(t.actions, r.actions) + section(t.checks, r.checks) + section(t.question, r.questions)
     + `\n\n<i>${t.caveat}</i>\n${t.timing}: ${Number(seconds).toFixed(1)} ${t.seconds}`;
+}
+
+export function renderFollowUp(r, lang) {
+  const t = copy[lang], e = escapeHtml;
+  return `<b>🌿 ${t.followUpHeading}</b>\n\n${t.understoodPrefix} ${e(r.understood)}`
+    + `\n\n<b>${t.followUpUpdate}</b>\n${t.followUpChange[r.change]} ${e(r.explanation)}`
+    + `\n\n<b>${t.followUpStep}</b>\n${e(r.nextStep)}`
+    + (r.question ? `\n\n<b>${t.question}</b>\n${e(r.question)}` : '')
+    + `\n\n<i>${t.caveat}</i>`;
 }

@@ -1,12 +1,13 @@
 import { telegram, boundedBytes } from './api.js';
-import { analyze, compareImages, prepareImage } from './analysis.js';
-import { crops, copy, cropKeyboard, menu, renderResult, renderComparison, messageChunks } from './ui.js';
+import { analyze, answerFollowUp, compareImages, prepareImage } from './analysis.js';
+import { crops, copy, cropKeyboard, menu, renderResult, renderComparison, renderFollowUp, messageChunks } from './ui.js';
 
 export class Bot {
   constructor(config, store, overrides = {}) {
     this.config = config; this.store = store;
     this.call = overrides.call || ((method, body) => telegram(config.token, method, body));
     this.analyze = overrides.analyze || analyze;
+    this.followUp = overrides.followUp || answerFollowUp;
     this.compare = overrides.compare || compareImages;
     this.delay = overrides.delay || (ms => new Promise(resolve => setTimeout(resolve, ms)));
     this.prepare = overrides.prepare || prepareImage;
@@ -66,6 +67,9 @@ export class Bot {
   analyzeAvailable(image, crop, lang, note) {
     return this.requestAvailable(config => this.analyze(image, config, crop, lang, note));
   }
+  followUpAvailable(image, crop, lang, previous, context, userText) {
+    return this.requestAvailable(config => this.followUp(image, config, crop, lang, previous, context, userText));
+  }
   compareAvailable(baseline, current, crop, lang, notes) {
     return this.requestAvailable(config => this.compare(baseline, current, config, crop, lang, notes));
   }
@@ -122,10 +126,13 @@ export class Bot {
       const started = performance.now();
       try {
         await this.say(id, t.refining);
-        const context = `${session.context}\nУточнение пользователя: ${msg.text.trim()}`.slice(-1200);
-        const analyzed = await this.analyzeAvailable(session.image, session.crop, lang, context);
-        const text = renderResult(analyzed.result, lang, (performance.now() - started) / 1000);
-        this.sessions.set(id, { ...session, context, updated: Date.now() });
+        const userText = msg.text.trim().slice(0, 700);
+        const context = `${session.context}\n${userText}`.slice(-1200);
+        const analyzed = session.assessment
+          ? await this.followUpAvailable(session.image, session.crop, lang, session.assessment, session.context, userText)
+          : await this.analyzeAvailable(session.image, session.crop, lang, context);
+        const text = session.assessment ? renderFollowUp(analyzed.result, lang) : renderResult(analyzed.result, lang, (performance.now() - started) / 1000);
+        this.sessions.set(id, { ...session, context, assessment: session.assessment || analyzed.result, updated: Date.now() });
         this.store.save(id, { last: text });
         return await this.say(id, text, menu(lang));
       } catch (error) {
@@ -156,7 +163,7 @@ export class Bot {
         const compared = await this.compareAvailable(observation.baseline, image, observation.crop, lang, { baseline: observation.baselineNote || '', current: context });
         const text = renderComparison(compared.result, lang, (performance.now() - started) / 1000);
         this.observations.delete(id);
-        this.sessions.set(id, { image, crop: observation.crop, context, updated: Date.now() });
+        this.sessions.set(id, { image, crop: observation.crop, context, assessment: compared.result, updated: Date.now() });
         this.store.save(id, { last: text });
         await this.say(id, text, menu(lang));
         console.log(JSON.stringify({ event: 'comparison_complete', seconds: Number(((performance.now() - started) / 1000).toFixed(2)), status: compared.result.status, fallback: compared.fallback }));
@@ -167,6 +174,7 @@ export class Bot {
       const analyzed = await this.analyzeAvailable(image, u.crop, lang, context);
       const text = renderResult(analyzed.result, lang, (performance.now() - started) / 1000);
       await this.say(id, text, menu(lang));
+      this.sessions.set(id, { image, crop: u.crop, context, assessment: analyzed.result, updated: Date.now() });
       this.store.save(id, { last: text });
       console.log(JSON.stringify({ event: 'analysis_complete', seconds: Number(((performance.now() - started) / 1000).toFixed(2)), status: analyzed.result.status, fallback: analyzed.fallback }));
     } catch (error) {

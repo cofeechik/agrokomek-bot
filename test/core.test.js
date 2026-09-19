@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import sharp from 'sharp';
 import { Store } from '../src/store.js';
 import { Bot } from '../src/bot.js';
-import { prepareImage, validateResult, analyze } from '../src/analysis.js';
-import { crops, cropKeyboard, renderResult, messageChunks } from '../src/ui.js';
+import { prepareImage, validateResult, analyze, answerFollowUp } from '../src/analysis.js';
+import { crops, cropKeyboard, renderResult, renderFollowUp, messageChunks } from '../src/ui.js';
 import { makeServer } from '../src/server.js';
 import { configFrom } from '../src/config.js';
 
@@ -47,6 +47,21 @@ test('Gemini sends photo with schema and rejects truncated output', async () => 
   await assert.rejects(analyze(Buffer.from('x'), cfg, 'potato', 'ru', '', async () => { attempts++; return { candidates: [{ finishReason: 'MAX_TOKENS' }] }; }), error => error.code === 'INVALID_ASSESSMENT');
   assert.equal(attempts, 2);
 });
+test('follow-up prompt includes the new answer and previous assessment without requesting a full report', async () => {
+  let body;
+  const followUp = { understood: 'Пятна появились после дождя и есть на 20 растениях.', change: 'updated', explanation: 'Распространение требует более быстрого осмотра.', nextStep: 'Осмотрите соседние растения сегодня.', question: '' };
+  const request = async (_key, _path, payload) => { body = payload; return { candidates: [{ finishReason: 'STOP', content: { parts: [{ text: JSON.stringify(followUp) }] } }] }; };
+  const actual = await answerFollowUp(Buffer.from('image'), cfg, 'wheat', 'ru', result, 'Вчера появились пятна', 'После дождя поражены 20 растений', request);
+  assert.equal(actual.understood, followUp.understood);
+  assert.ok(body.systemInstruction.parts[0].text.includes('После дождя поражены 20 растений'));
+  assert.ok(body.systemInstruction.parts[0].text.includes(result.title));
+  assert.ok(body.systemInstruction.parts[0].text.includes('not a fresh report'));
+  assert.equal(body.contents[0].parts[1].inlineData.mimeType, 'image/jpeg');
+  const rendered = renderFollowUp(actual, 'ru');
+  assert.ok(rendered.includes('Пятна появились после дождя'));
+  assert.ok(!rendered.includes(result.title));
+  assert.ok(!rendered.includes('Ответьте одним сообщением'));
+});
 test('store saves and deletes personal state while retaining update deduplication', () => {
   const store = new Store(':memory:');
   try {
@@ -81,17 +96,23 @@ test('a new user photo is analyzed immediately, its caption is used and a duplic
     bot.enqueue(update); assert.equal(bot.tasks.size, 0);
   } finally { store.close(); }
 });
-test('a text reply reuses the temporary image and adds context for a refined assessment', async () => {
-  const store = new Store(':memory:'); const sent = []; const notes = [];
-  const bot = new Bot(cfg, store, { call: async (_method, body) => { sent.push(body); return {}; }, download: async () => Buffer.from('photo'), prepare: async b => b, analyze: async (_img, _cfg, _crop, _lang, note) => { notes.push(note); return result; } });
+test('a text reply receives a concise answer based on the previous result and new detail', async () => {
+  const store = new Store(':memory:'); const sent = []; const followUps = []; let analyses = 0;
+  const response = { understood: 'Поражено около 20 растений после дождя.', change: 'updated', explanation: 'Это важнее единичного пятна, но фото не подтверждает причину.', nextStep: 'Осмотрите другие участки поля сегодня.', question: '' };
+  const bot = new Bot(cfg, store, { call: async (_method, body) => { sent.push(body); return {}; }, download: async () => Buffer.from('photo'), prepare: async b => b, analyze: async () => { analyses++; return result; }, followUp: async (_img, _cfg, _crop, _lang, previous, context, userText) => { followUps.push({ previous, context, userText }); return response; } });
   try {
-    store.save(7, { language: 'ru', crop: 'potato' });
+    store.save(7, { language: 'ru', crop: 'wheat' });
     await bot.handle(message(1, { photo: [{ file_id: 'photo', file_size: 300 }], caption: 'Появилось вчера' }));
     await bot.handle(message(2, { text: 'Поражено около 20 растений, после дождя' }));
-    assert.equal(notes.length, 2);
-    assert.ok(notes[1].includes('Появилось вчера'));
-    assert.ok(notes[1].includes('20 растений'));
+    assert.equal(analyses, 1);
+    assert.equal(followUps.length, 1);
+    assert.equal(followUps[0].previous.title, result.title);
+    assert.equal(followUps[0].context, 'Появилось вчера');
+    assert.ok(followUps[0].userText.includes('20 растений'));
     assert.ok(sent.some(x => x.text?.includes('Учитываю ваш ответ')));
+    assert.ok(sent.at(-1).text.includes('Поражено около 20 растений'));
+    assert.ok(!sent.at(-1).text.includes(result.title));
+    assert.equal(bot.sessions.get(7).context, 'Появилось вчера\nПоражено около 20 растений, после дождя');
   } finally { store.close(); }
 });
 test('Gemini quota failures give a clear error and release the user lock', async () => {
