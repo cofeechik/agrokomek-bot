@@ -24,7 +24,7 @@ export const copy = {
     baselineReady: '✅ Первое фото принято. Теперь отправьте более новое фото того же растения или участка. В подписи можно указать, сколько дней прошло и что изменилось.',
     comparing: '🔎 Сравниваю два снимка и ищу видимые изменения…',
     noHistory: 'Пока нет сохранённого результата. Отправьте фото растения.',
-    deleted: 'Настройки, последний результат и временная копия фото удалены.',
+    deleted: 'Настройки, результаты, история наблюдений и временные копии фото удалены.',
     private: 'Для анализа фото откройте личный чат с ботом.',
     fallback: 'Пришлите фотографию растения. В подписи укажите, когда появились симптомы, сколько растений затронуто и какая была погода.',
     photo: '📷 Новое фото', culture: '🌱 Культура', observation: '📈 Наблюдение', history: '🗂 Последний результат', guide: '💡 Как снимать',
@@ -55,7 +55,7 @@ export const copy = {
     baselineReady: '✅ Бірінші сурет қабылданды. Енді сол өсімдіктің немесе учаскенің жаңа суретін жіберіңіз. Сипаттамада қанша күн өткенін және не өзгергенін жаза аласыз.',
     comparing: '🔎 Екі суретті салыстырып, көрінетін өзгерістерді іздеп жатырмын…',
     noHistory: 'Әзірге нәтиже жоқ. Өсімдіктің суретін жіберіңіз.',
-    deleted: 'Баптаулар, соңғы нәтиже және суреттің уақытша көшірмесі өшірілді.',
+    deleted: 'Баптаулар, нәтижелер, бақылау тарихы және суреттердің уақытша көшірмелері өшірілді.',
     private: 'Суретті талдау үшін ботпен жеке чатты ашыңыз.',
     fallback: 'Өсімдіктің суретін жіберіңіз. Сипаттамада белгілердің қашан пайда болғанын, қанша өсімдік зақымданғанын және ауа райын жазыңыз.',
     photo: '📷 Жаңа сурет', culture: '🌱 Дақыл', observation: '📈 Бақылау', history: '🗂 Соңғы нәтиже', guide: '💡 Қалай түсіру керек',
@@ -84,7 +84,7 @@ export function cropKeyboard(lang) {
 }
 export function menu(lang) {
   const t = copy[lang];
-  return { inline_keyboard: [[{ text: t.photo, callback_data: 'photo' }, { text: t.culture, callback_data: 'crop' }], [{ text: t.observation, callback_data: 'observe' }], [{ text: t.history, callback_data: 'history' }, { text: t.guide, callback_data: 'help' }], [{ text: 'Қазақша / Русский', callback_data: 'language' }]] };
+  return { inline_keyboard: [[{ text: t.photo, callback_data: 'photo' }, { text: t.culture, callback_data: 'crop' }], [{ text: t.observation, callback_data: 'observe' }, { text: lang === 'kk' ? '📊 Жиынтық' : '📊 Сводка', callback_data: 'analytics' }], [{ text: t.history, callback_data: 'history' }, { text: t.guide, callback_data: 'help' }], [{ text: 'Қазақша / Русский', callback_data: 'language' }]] };
 }
 export function renderResult(r, lang, seconds) {
   const t = copy[lang], e = escapeHtml;

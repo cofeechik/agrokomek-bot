@@ -3,11 +3,14 @@ import { configFrom } from './config.js';
 import { Store } from './store.js';
 import { Bot } from './bot.js';
 import { makeServer } from './server.js';
+import { Journal } from './journal.js';
 
 const config = configFrom();
 if (!config.token) { console.error('Set TELEGRAM_BOT_TOKEN in .env or host settings.'); process.exit(1); }
 const store = new Store(config.dataPath);
-const bot = new Bot(config, store);
+if (Boolean(config.journalUrl) !== Boolean(config.journalSecret)) throw new Error('Set both SUPABASE_URL and SUPABASE_SECRET_KEY');
+const journal = config.journalUrl ? new Journal(config.journalUrl, config.journalSecret) : null;
+const bot = new Bot(config, store, { journal });
 const state = { ready: false };
 const server = makeServer(config, bot, state);
 server.requestTimeout = 15000;
@@ -29,11 +32,13 @@ try {
     { command: 'help', description: '📷 Как снимать / Нұсқаулық' },
     { command: 'language', description: '🇰🇿 Қазақша / Русский' },
     { command: 'history', description: '🗂 Последний результат / Соңғы нәтиже' },
+    { command: 'observe', description: '📈 Наблюдения / Бақылаулар' },
+    { command: 'analytics', description: '📊 Сводка осмотров / Тексеру жиынтығы' },
     { command: 'privacy', description: 'Данные / Деректер' },
     { command: 'delete', description: 'Удалить мои данные / Деректерді өшіру' },
   ];
   await bot.call('setMyCommands', { commands });
-  await bot.call('setMyDescription', { description: '🌿 AgroKomek — помощник по состоянию растений. Отправьте фото листа и получите предварительную оценку и следующие шаги. Картофель — основной сценарий. Қазақша / Русский. Прототип AgriTech AI Hackathon.' });
+  await bot.call('setMyDescription', { description: '🌿 AgroKomek — помощник для первичного осмотра растений. Не нужно знать названия болезней: отправьте фото и описание, чтобы понять, что проверить и когда обратиться к агроному. Қазақша / Русский. Прототип AgriTech AI Hackathon.' });
   if (config.mode === 'webhook') {
     await bot.call('setWebhook', { url: `${config.baseUrl}/telegram`, secret_token: config.secret, allowed_updates: ['message', 'callback_query'], max_connections: 4, drop_pending_updates: false });
     state.ready = true;

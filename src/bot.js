@@ -1,10 +1,13 @@
 import { telegram, boundedBytes } from './api.js';
 import { analyze, answerFollowUp, compareImages, prepareImage } from './analysis.js';
 import { crops, copy, cropKeyboard, menu, renderResult, renderComparison, renderFollowUp, messageChunks } from './ui.js';
+import { journalCopy, observationDate, observationKeyboard, renderAnalytics } from './journal-ui.js';
 
 export class Bot {
   constructor(config, store, overrides = {}) {
     this.config = config; this.store = store;
+    this.journal = overrides.journal || null;
+    this.journalNotified = new Set();
     this.call = overrides.call || ((method, body) => telegram(config.token, method, body));
     this.analyze = overrides.analyze || analyze;
     this.followUp = overrides.followUp || answerFollowUp;
@@ -73,6 +76,23 @@ export class Bot {
   compareAvailable(baseline, current, crop, lang, notes) {
     return this.requestAvailable(config => this.compare(baseline, current, config, crop, lang, notes));
   }
+  async saveObservation(id, msg, crop, result, parentId, lang) {
+    if (!this.journal) return;
+    try {
+      await this.journal.add(id, { message_id: msg.message_id, crop, file_id: (msg.photo?.at(-1) || msg.document).file_id,
+        media_type: msg.document ? 'document' : 'photo', caption: (msg.caption || '').slice(0, 1024), assessment: result, parent_id: parentId || null });
+    } catch {
+      console.error('Observation save failed; no private data logged.');
+      await this.say(id, journalCopy[lang].saveFailed);
+    }
+  }
+  async showObservations(id, lang, page = 0) {
+    const t = journalCopy[lang];
+    try {
+      const rows = await this.journal.list(id, page * 5, 6);
+      return await this.say(id, `${t.title}\n\n${rows.length ? t.choose : t.empty}`, observationKeyboard(rows, page, lang));
+    } catch { return this.say(id, t.unavailable, menu(lang)); }
+  }
   async handle(update) {
     const expired = Date.now() - 30 * 60 * 1000;
     for (const [chatId, session] of this.sessions) if (session.updated < expired) this.sessions.delete(chatId);
@@ -90,8 +110,9 @@ export class Bot {
     const command = cb?.data || msg.text?.split(/\s/)[0]?.split('@')[0]?.replace(/^\//, '') || '';
     const file = msg.photo?.at(-1) || msg.document;
     if (cb) await this.call('answerCallbackQuery', { callback_query_id: cb.id });
-    if (!existing && command !== 'start' && !file) return this.say(id, t.welcome + '\n\n' + t.ready, cropKeyboard(lang));
-    if (command === 'start') return this.say(id, t.welcome, cropKeyboard(lang));
+    const journalCommand = this.journal && (command === 'observe' || command === 'analytics' || command.startsWith('saved:') || command.startsWith('observe:page:') || command === 'delete');
+    if (!existing && command !== 'start' && !file && !journalCommand) return this.say(id, t.welcome + '\n\n' + t.ready, cropKeyboard(lang));
+    if (command === 'start') return this.say(id, t.welcome + '\n\n' + journalCopy[lang].intro + (this.journal ? '\n\n' + journalCopy[lang].privacy : ''), cropKeyboard(lang));
     if (command === 'language') return this.say(id, 'Тілді таңдаңыз / Выберите язык', { inline_keyboard: [[{ text: 'Қазақша', callback_data: 'lang:kk' }, { text: 'Русский', callback_data: 'lang:ru' }]] });
     if (['lang:ru', 'lang:kk'].includes(command)) {
       const selected = command.slice(5); this.store.save(id, { language: selected });
@@ -104,15 +125,40 @@ export class Bot {
       return this.say(id, `${crops[command.slice(5)][lang === 'kk' ? 1 : 0]}\n\n${t.ready}`, menu(lang));
     }
     if (command === 'photo') { this.observations.delete(id); return this.say(id, t.ready, menu(lang)); }
-    if (command === 'observe') {
+    if (command === 'observe' && this.journal) return this.showObservations(id, lang);
+    if (/^observe:page:\d{1,5}$/.test(command) && this.journal) return this.showObservations(id, lang, Number(command.split(':')[2]));
+    if (command.startsWith('saved:') && this.journal) {
+      if (this.active.has(id)) return this.say(id, t.busy);
+      try {
+        const saved = await this.journal.get(id, command.slice(6));
+        if (!saved) return this.say(id, journalCopy[lang].missing, menu(lang));
+        const method = saved.media_type === 'document' ? 'sendDocument' : 'sendPhoto';
+        await this.call(method, { chat_id: id, [saved.media_type === 'document' ? 'document' : 'photo']: saved.file_id,
+          caption: `${observationDate(saved.created_at)} · ${saved.assessment.crop}\n${saved.caption}`.slice(0, 1000) });
+        this.observations.set(id, { stage: 'current', crop: saved.crop, baselineId: saved.id, updated: Date.now() });
+        return this.say(id, journalCopy[lang].selected, menu(lang));
+      } catch { return this.say(id, journalCopy[lang].unavailable, menu(lang)); }
+    }
+    if (command === 'analytics') {
+      if (!this.journal) return this.say(id, journalCopy[lang].disabled, menu(lang));
+      try {
+        const rows = await this.journal.list(id, 0, 101);
+        return await this.say(id, renderAnalytics(rows.slice(0, 100), lang, rows.length > 100), menu(lang));
+      } catch { return this.say(id, journalCopy[lang].unavailable, menu(lang)); }
+    }
+    if (command === 'observe' || command === 'observe:manual') {
       this.observations.set(id, { stage: 'baseline', crop: u.crop, updated: Date.now() });
       return this.say(id, t.observationStart, menu(lang));
     }
     if (command === 'help') return this.say(id, t.help, menu(lang));
-    if (command === 'privacy') return this.say(id, t.privacy, menu(lang));
+    if (command === 'privacy') return this.say(id, t.privacy + (this.journal ? '\n\n' + journalCopy[lang].privacy : ''), menu(lang));
     if (command === 'history') return this.say(id, u.last || t.noHistory, menu(lang));
     if (command === 'delete') {
       if (this.active.has(id)) return this.say(id, t.busy);
+      if (this.journal) {
+        try { await this.journal.delete(id); }
+        catch { return this.say(id, journalCopy[lang].unavailable, menu(lang)); }
+      }
       this.sessions.delete(id); this.observations.delete(id);
       this.store.delete(id); return this.say(id, t.deleted);
     }
@@ -149,6 +195,10 @@ export class Bot {
     const started = performance.now();
     try {
       if (!existing) await this.say(id, t.firstPhoto);
+      if (this.journal && !this.journalNotified.has(id)) {
+        await this.say(id, journalCopy[lang].saveNotice);
+        this.journalNotified.add(id);
+      }
       let image;
       try { image = await this.prepare(await this.download(file)); }
       catch { return await this.say(id, t.badImage, menu(lang)); }
@@ -160,12 +210,20 @@ export class Bot {
       }
       if (observation?.stage === 'current') {
         await this.say(id, t.comparing);
-        const compared = await this.compareAvailable(observation.baseline, image, observation.crop, lang, { baseline: observation.baselineNote || '', current: context });
+        let baseline = observation.baseline, baselineNote = observation.baselineNote || '';
+        if (observation.baselineId) {
+          const saved = await this.journal.get(id, observation.baselineId);
+          if (!saved) { this.observations.delete(id); return await this.say(id, journalCopy[lang].missing, menu(lang)); }
+          baseline = await this.prepare(await this.download({ file_id: saved.file_id }));
+          baselineNote = `Uploaded: ${saved.created_at}. User caption: ${saved.caption}`;
+        }
+        const compared = await this.compareAvailable(baseline, image, observation.crop, lang, { baseline: baselineNote, current: context });
         const text = renderComparison(compared.result, lang, (performance.now() - started) / 1000);
         this.observations.delete(id);
         this.sessions.set(id, { image, crop: observation.crop, context, assessment: compared.result, updated: Date.now() });
         this.store.save(id, { last: text });
         await this.say(id, text, menu(lang));
+        await this.saveObservation(id, msg, observation.crop, compared.result, observation.baselineId, lang);
         console.log(JSON.stringify({ event: 'comparison_complete', seconds: Number(((performance.now() - started) / 1000).toFixed(2)), status: compared.result.status, fallback: compared.fallback }));
         return;
       }
@@ -176,6 +234,7 @@ export class Bot {
       await this.say(id, text, menu(lang));
       this.sessions.set(id, { image, crop: u.crop, context, assessment: analyzed.result, updated: Date.now() });
       this.store.save(id, { last: text });
+      await this.saveObservation(id, msg, u.crop, analyzed.result, null, lang);
       console.log(JSON.stringify({ event: 'analysis_complete', seconds: Number(((performance.now() - started) / 1000).toFixed(2)), status: analyzed.result.status, fallback: analyzed.fallback }));
     } catch (error) {
       console.error(JSON.stringify({ event: 'analysis_failed', service: error.service || 'analysis', status: error.status || 'invalid_response' }));

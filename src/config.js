@@ -16,5 +16,6 @@ export function configFrom(env = process.env) {
     fallbackModel: env.GEMINI_FALLBACK_MODEL || 'gemini-3.5-flash-lite', mode, baseUrl,
     secret: env.WEBHOOK_SECRET || '', port: integer('PORT', 3000),
     dataPath: env.DATA_PATH || 'data/state.sqlite',
+    journalUrl: env.SUPABASE_URL || '', journalSecret: env.SUPABASE_SECRET_KEY || '',
   };
 }
