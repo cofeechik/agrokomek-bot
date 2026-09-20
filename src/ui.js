@@ -27,7 +27,7 @@ export const copy = {
     deleted: 'Настройки, результаты, история наблюдений и временные копии фото удалены.',
     private: 'Для анализа фото откройте личный чат с ботом.',
     fallback: 'Пришлите фотографию растения. В подписи укажите, когда появились симптомы, сколько растений затронуто и какая была погода.',
-    photo: '📷 Новое фото', culture: '🌱 Культура', observation: '📈 Наблюдение', history: '🗂 Последний результат', guide: '💡 Как снимать',
+    photo: '📷 Новое фото', culture: '🌱 Культура', observation: '📈 Наблюдение', history: '🗂 Последний результат', guide: '💡 Как снимать', report: '📤 Сигнал агроному', reportUnavailable: 'Сначала отправьте фото и дождитесь результата.',
     hypothesis: 'Предварительная оценка', uncertain: 'Недостаточно данных для вывода', signs: 'Что видно',
     meaning: 'Что означает результат', actions: 'Что сделать сейчас', checks: 'Что проверить дальше', alternatives: 'Возможные другие причины', question: 'Ответьте одним сообщением', escalate: 'Когда нужен специалист',
     caveat: 'Это гипотеза по фото, не диагноз. Перед обработкой растений проконсультируйтесь с агрономом.',
@@ -58,7 +58,7 @@ export const copy = {
     deleted: 'Баптаулар, нәтижелер, бақылау тарихы және суреттердің уақытша көшірмелері өшірілді.',
     private: 'Суретті талдау үшін ботпен жеке чатты ашыңыз.',
     fallback: 'Өсімдіктің суретін жіберіңіз. Сипаттамада белгілердің қашан пайда болғанын, қанша өсімдік зақымданғанын және ауа райын жазыңыз.',
-    photo: '📷 Жаңа сурет', culture: '🌱 Дақыл', observation: '📈 Бақылау', history: '🗂 Соңғы нәтиже', guide: '💡 Қалай түсіру керек',
+    photo: '📷 Жаңа сурет', culture: '🌱 Дақыл', observation: '📈 Бақылау', history: '🗂 Соңғы нәтиже', guide: '💡 Қалай түсіру керек', report: '📤 Агрономға сигнал', reportUnavailable: 'Алдымен суретті жіберіп, нәтижені күтіңіз.',
     hypothesis: 'Алдын ала бағалау', uncertain: 'Қорытынды жасауға дерек жеткіліксіз', signs: 'Көрінетін белгілер',
     meaning: 'Нәтиже нені білдіреді', actions: 'Қазір не істеу керек', checks: 'Тағы нені тексеру керек', alternatives: 'Басқа ықтимал себептер', question: 'Бір хабарламамен жауап беріңіз', escalate: 'Маман қашан қажет',
     caveat: 'Бұл сурет бойынша болжам, диагноз емес. Өңдеу алдында агрономмен кеңесіңіз.',
@@ -85,6 +85,11 @@ export function cropKeyboard(lang) {
 export function menu(lang) {
   const t = copy[lang];
   return { inline_keyboard: [[{ text: t.photo, callback_data: 'photo' }, { text: t.culture, callback_data: 'crop' }], [{ text: t.observation, callback_data: 'observe' }, { text: lang === 'kk' ? '📊 Жиынтық' : '📊 Сводка', callback_data: 'analytics' }], [{ text: t.history, callback_data: 'history' }, { text: t.guide, callback_data: 'help' }], [{ text: 'Қазақша / Русский', callback_data: 'language' }]] };
+}
+
+export function resultMenu(lang) {
+  const t = copy[lang];
+  return { inline_keyboard: [[{ text: t.report, callback_data: 'report' }], ...menu(lang).inline_keyboard] };
 }
 export function renderResult(r, lang, seconds) {
   const t = copy[lang], e = escapeHtml;

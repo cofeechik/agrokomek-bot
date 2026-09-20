@@ -1,6 +1,6 @@
 import { telegram, boundedBytes } from './api.js';
 import { analyze, answerFollowUp, compareImages, prepareImage } from './analysis.js';
-import { crops, copy, cropKeyboard, menu, renderResult, renderComparison, renderFollowUp, messageChunks } from './ui.js';
+import { crops, copy, cropKeyboard, menu, resultMenu, renderResult, renderComparison, renderFollowUp, messageChunks, escapeHtml } from './ui.js';
 import { journalCopy, observationDate, observationKeyboard, renderAnalytics } from './journal-ui.js';
 
 export class Bot {
@@ -93,6 +93,14 @@ export class Bot {
       return await this.say(id, `${t.title}\n\n${rows.length ? t.choose : t.empty}`, observationKeyboard(rows, page, lang));
     } catch { return this.say(id, t.unavailable, menu(lang)); }
   }
+  reportText(session, lang) {
+    const t = copy[lang], r = session?.assessment;
+    if (!r) return null;
+    const e = escapeHtml;
+    const items = values => (values || []).slice(0, 3).map(value => `• ${e(value)}`).join('\n');
+    const note = session.context?.trim() ? `\n\n<b>Со слов работника</b>\n${e(session.context.trim().slice(0, 500))}` : '';
+    return `<b>📋 ${t.report}</b>\n\n<b>Культура:</b> ${e(r.crop)}\n<b>Приоритет:</b> ${e(t.urgency[r.urgency] || t.urgency.unknown)}\n<b>Предварительная оценка:</b> ${e(r.title)}\n\n<b>${t.signs}</b>\n${items(r.signs) || '• ' + e(t.uncertain)}\n\n<b>${t.actions}</b>\n${items(r.actions)}\n\n<b>${t.checks}</b>\n${items(r.checks)}${note}\n\n<i>${e(t.caveat)} Передайте этот сигнал агроному для проверки на поле.</i>`;
+  }
   async handle(update) {
     const expired = Date.now() - 30 * 60 * 1000;
     for (const [chatId, session] of this.sessions) if (session.updated < expired) this.sessions.delete(chatId);
@@ -153,6 +161,10 @@ export class Bot {
     if (command === 'help') return this.say(id, t.help, menu(lang));
     if (command === 'privacy') return this.say(id, t.privacy + (this.journal ? '\n\n' + journalCopy[lang].privacy : ''), menu(lang));
     if (command === 'history') return this.say(id, u.last || t.noHistory, menu(lang));
+    if (command === 'report') {
+      const report = this.reportText(this.sessions.get(id), lang);
+      return this.say(id, report || t.reportUnavailable, menu(lang));
+    }
     if (command === 'delete') {
       if (this.active.has(id)) return this.say(id, t.busy);
       if (this.journal) {
@@ -180,7 +192,7 @@ export class Bot {
         const text = session.assessment ? renderFollowUp(analyzed.result, lang) : renderResult(analyzed.result, lang, (performance.now() - started) / 1000);
         this.sessions.set(id, { ...session, context, assessment: session.assessment || analyzed.result, updated: Date.now() });
         this.store.save(id, { last: text });
-        return await this.say(id, text, menu(lang));
+        return await this.say(id, text, resultMenu(lang));
       } catch (error) {
         console.error(JSON.stringify({ event: 'refinement_failed', service: error.service || 'analysis', status: error.status || 'invalid_response' }));
         return await this.say(id, this.failureText(error, t, true), menu(lang));
@@ -222,7 +234,7 @@ export class Bot {
         this.observations.delete(id);
         this.sessions.set(id, { image, crop: observation.crop, context, assessment: compared.result, updated: Date.now() });
         this.store.save(id, { last: text });
-        await this.say(id, text, menu(lang));
+        await this.say(id, text, resultMenu(lang));
         await this.saveObservation(id, msg, observation.crop, compared.result, observation.baselineId, lang);
         console.log(JSON.stringify({ event: 'comparison_complete', seconds: Number(((performance.now() - started) / 1000).toFixed(2)), status: compared.result.status, fallback: compared.fallback }));
         return;
@@ -231,7 +243,7 @@ export class Bot {
       this.sessions.set(id, { image, crop: u.crop, context, updated: Date.now() });
       const analyzed = await this.analyzeAvailable(image, u.crop, lang, context);
       const text = renderResult(analyzed.result, lang, (performance.now() - started) / 1000);
-      await this.say(id, text, menu(lang));
+      await this.say(id, text, resultMenu(lang));
       this.sessions.set(id, { image, crop: u.crop, context, assessment: analyzed.result, updated: Date.now() });
       this.store.save(id, { last: text });
       await this.saveObservation(id, msg, u.crop, analyzed.result, null, lang);

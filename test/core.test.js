@@ -4,7 +4,7 @@ import sharp from 'sharp';
 import { Store } from '../src/store.js';
 import { Bot } from '../src/bot.js';
 import { prepareImage, validateResult, analyze, answerFollowUp } from '../src/analysis.js';
-import { crops, cropKeyboard, renderResult, renderFollowUp, messageChunks } from '../src/ui.js';
+import { crops, cropKeyboard, resultMenu, renderResult, renderFollowUp, messageChunks } from '../src/ui.js';
 import { makeServer } from '../src/server.js';
 import { configFrom } from '../src/config.js';
 
@@ -29,6 +29,17 @@ test('formatted model content is escaped and contains no fake confidence percent
   const text = renderResult(result, 'ru', 3.4);
   assert.ok(!text.includes('<script>')); assert.ok(text.includes('&lt;script&gt;')); assert.ok(!text.includes('%'));
   assert.ok(renderResult(result, 'kk', 3).includes('Алдын ала'));
+});
+test('agronomist signal turns a result into a forwardable field report', () => {
+  const store = new Store(':memory:');
+  const bot = new Bot(cfg, store);
+  try {
+    const report = bot.reportText({ context: 'Поле 7, пятна после дождя', assessment: result }, 'ru');
+    assert.ok(report.includes('Сигнал агроному'));
+    assert.ok(report.includes('Поле 7, пятна после дождя'));
+    assert.ok(report.includes('Осмотрите соседние растения'));
+    assert.equal(resultMenu('ru').inline_keyboard[0][0].callback_data, 'report');
+  } finally { store.close(); }
 });
 test('long escaped output is split on balanced lines under Telegram message limit', () => {
   const text = Array.from({ length: 8 }, () => `<b>${'&amp;'.repeat(150)}</b>`).join('\n');
