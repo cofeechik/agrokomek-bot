@@ -98,8 +98,9 @@ export class Bot {
     if (!r) return null;
     const e = escapeHtml;
     const items = values => (values || []).slice(0, 3).map(value => `• ${e(value)}`).join('\n');
-    const note = session.context?.trim() ? `\n\n<b>Со слов работника</b>\n${e(session.context.trim().slice(0, 500))}` : '';
-    return `<b>📋 ${t.report}</b>\n\n<b>Культура:</b> ${e(r.crop)}\n<b>Приоритет:</b> ${e(t.urgency[r.urgency] || t.urgency.unknown)}\n<b>Предварительная оценка:</b> ${e(r.title)}\n\n<b>${t.signs}</b>\n${items(r.signs) || '• ' + e(t.uncertain)}\n\n<b>${t.actions}</b>\n${items(r.actions)}\n\n<b>${t.checks}</b>\n${items(r.checks)}${note}\n\n<i>${e(t.caveat)} Передайте этот сигнал агроному для проверки на поле.</i>`;
+    const observations = r.signs?.length ? r.signs : r.changes;
+    const note = session.context?.trim() ? `\n\n<b>${t.reportWorker}</b>\n${e(session.context.trim().slice(0, 500))}` : '';
+    return `<b>📋 ${t.report}</b>\n\n<b>${t.reportCrop}:</b> ${e(r.crop)}\n<b>${t.reportPriority}:</b> ${e(t.urgency[r.urgency] || t.urgency.unknown)}\n<b>${t.reportAssessment}:</b> ${e(r.title)}\n\n<b>${r.changes?.length ? t.changes : t.signs}</b>\n${items(observations) || '• ' + e(t.uncertain)}\n\n<b>${t.actions}</b>\n${items(r.actions)}\n\n<b>${t.checks}</b>\n${items(r.checks)}${note}\n\n<i>${e(t.caveat)} ${e(t.reportHandoff)}</i>`;
   }
   async handle(update) {
     const expired = Date.now() - 30 * 60 * 1000;

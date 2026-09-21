@@ -41,6 +41,20 @@ test('agronomist signal turns a result into a forwardable field report', () => {
     assert.equal(resultMenu('ru').inline_keyboard[0][0].callback_data, 'report');
   } finally { store.close(); }
 });
+test('agronomist signal callback sends a localized report and supports comparison changes', async () => {
+  const store = new Store(':memory:'); const sent = [];
+  const bot = new Bot(cfg, store, { call: async (method, body) => { sent.push({ method, body }); return {}; } });
+  try {
+    store.save(7, { language: 'kk', crop: 'wheat' });
+    bot.sessions.set(7, { context: 'Жаңбырдан кейін', assessment: { ...result, status: 'comparison', crop: 'Бидай', urgency: 'unknown', signs: undefined, changes: ['Дақтар көбейді'] }, updated: Date.now() });
+    await bot.handle({ update_id: 2, callback_query: { id: 'cb', from: { id: 7, language_code: 'kk' }, data: 'report', message: { message_id: 2, chat: { id: 7, type: 'private' } } } });
+    const report = sent.find(x => x.method === 'sendMessage')?.body.text;
+    assert.ok(report.includes('Дақыл:'));
+    assert.ok(report.includes('Дақтар көбейді'));
+    assert.ok(report.includes('Жұмысшының айтуынша'));
+    assert.ok(!report.includes('Культура:'));
+  } finally { store.close(); }
+});
 test('long escaped output is split on balanced lines under Telegram message limit', () => {
   const text = Array.from({ length: 8 }, () => `<b>${'&amp;'.repeat(150)}</b>`).join('\n');
   const chunks = messageChunks(text);
